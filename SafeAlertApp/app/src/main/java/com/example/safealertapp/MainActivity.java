@@ -2,6 +2,8 @@ package com.example.safealertapp;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -14,11 +16,13 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.provider.ContactsContract;
 import android.speech.RecognizerIntent;
 import android.telephony.SmsManager;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
@@ -34,6 +38,8 @@ import androidx.activity.EdgeToEdge;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
 import java.util.ArrayList;
@@ -110,9 +116,19 @@ public class MainActivity extends AppCompatActivity {
         ///VOICE RECOGN
         findViewById(R.id.VoiceRecognButton).setOnClickListener(v -> startVoiceRecognition());
 
+        ///Inactivity
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+
+        ///weather notifications
+        checkWeatherAndNotify();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel("weather_channel", "Alerte Meteo",
+                    NotificationManager.IMPORTANCE_HIGH);
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            manager.createNotificationChannel(channel);
+        }
 
     }
     ///EMERGENCY CALL AFTER 10 SECONDS
@@ -155,6 +171,14 @@ public class MainActivity extends AppCompatActivity {
         ///permisiuni apel
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CALL_PHONE}, REQUEST_CALL_PERMISSION);
+        }
+        ///permisiuni notificari
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1001);
+            }
         }
     }
     ///Extragere contacte favorite
@@ -342,5 +366,59 @@ public class MainActivity extends AppCompatActivity {
         super.onPause();
         sensorManager.unregisterListener(sensorListener);
         inactivityHandler.removeCallbacks(inactivityRunnable);
+    }
+    ///Check weather
+    private void checkWeatherAndNotify() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            // TODO: Consider calling
+            //    ActivityCompat#requestPermissions
+            // here to request the missing permissions, and then overriding
+            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            //                                          int[] grantResults)
+            // to handle the case where the user grants the permission. See the documentation
+            // for ActivityCompat#requestPermissions for more details.
+            return;
+        }
+        fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
+            if (location != null) {
+                WeatherChecker.checkWeather(this, location.getLatitude(), location.getLongitude(),
+                        new WeatherChecker.WeatherCallback() {
+                            @Override
+                            public void onDangerDetected(String condition, double temp) {
+                                showNotification("Atenție!", "Vreme periculoasă: " + condition + " (" + temp + "°C)");
+
+                                // (opțional) trimite SMS
+                                SmsManager sms = SmsManager.getDefault();
+                                sms.sendTextMessage("07xxxxxxxx", null,
+                                        "Alertă meteo: " + condition + " (" + temp + "°C)", null, null);
+                            }
+
+                            @Override
+                            public void onSafe() {
+                                Log.d("WEATHER", "Vreme ok");
+                            }
+                        });
+            }
+        });
+    }
+    private void showNotification(String title, String message) {
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, "weather_channel")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle(title)
+                .setContentText(message)
+                .setPriority(NotificationCompat.PRIORITY_HIGH);
+
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            // TODO: Consider calling
+            //    ActivityCompat#requestPermissions
+            // here to request the missing permissions, and then overriding
+            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            //                                          int[] grantResults)
+            // to handle the case where the user grants the permission. See the documentation
+            // for ActivityCompat#requestPermissions for more details.
+            return;
+        }
+        notificationManager.notify(1001, builder.build());
     }
 }
