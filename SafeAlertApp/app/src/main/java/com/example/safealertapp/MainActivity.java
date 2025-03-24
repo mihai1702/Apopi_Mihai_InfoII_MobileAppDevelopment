@@ -2,16 +2,23 @@ package com.example.safealertapp;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.provider.ContactsContract;
+import android.speech.RecognizerIntent;
+import android.telephony.SmsManager;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
@@ -24,6 +31,7 @@ import com.google.android.gms.tasks.OnSuccessListener;
 
 
 import androidx.activity.EdgeToEdge;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -37,18 +45,23 @@ public class MainActivity extends AppCompatActivity {
     private static final int LOCATION_PERMISSION_CODE = 2;
     private FusedLocationProviderClient fusedLocationClient;
     private static final int REQUEST_CALL_PERMISSION = 1;
-    private static final String EMERGENCY_NUMBER = "0787596450"; // Înlocuiește cu numărul tău
+    private static final String EMERGENCY_NUMBER = "0787596450";
     private Handler handler = new Handler();
     private Runnable callRunnable;
     private Button stopEmergButton;
     private TextView EmergencyTextView;
+    private static final int VOICE_REQUEST_CODE = 123;
+    List<emergContact>emergContacts;
 
-//    List<emergContact>emergContacts=new ArrayList<>(Arrays.asList(
-//            new emergContact("Oana", "0748231348"),
-//            new emergContact("Mihai", "0787596450"),
-//            new emergContact("Razvan", "0748562056"),
-//            new emergContact("Bogdan", "0755285622")
-//    ));
+    private SensorManager sensorManager;
+    private Sensor accelerometer, gyroscope;
+
+    private Handler inactivityHandler = new Handler();
+    private Runnable inactivityRunnable;
+    private long inactivityDelay = 30 * 1000;///30 secunde
+    private final float MOVEMENT_THRESHOLD = 2.0f;///20.0f pentru testing
+
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,7 +70,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         permissions();
 
-        List<emergContact>emergContacts=getFavoriteContacts(this);
+        emergContacts=getFavoriteContacts(this);
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         Button EmergContact = findViewById(R.id.EmergButton);
@@ -74,7 +87,15 @@ public class MainActivity extends AppCompatActivity {
                 stopEmergencyCall();
             }
         });
+        ///SHORTCUT POWERBUTTON
+        if (getIntent().getBooleanExtra("sos_triggered", false)) {
+            for (emergContact contact : emergContacts) {
+                sendLocationAndMessage(contact);
 
+            }
+            startEmergencyCountDown();
+        }
+        ///BUTON EMERGENCY
         EmergContact.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -85,7 +106,16 @@ public class MainActivity extends AppCompatActivity {
                 startEmergencyCountDown();
             }
         });
+
+        ///VOICE RECOGN
+        findViewById(R.id.VoiceRecognButton).setOnClickListener(v -> startVoiceRecognition());
+
+        sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+
     }
+    ///EMERGENCY CALL AFTER 10 SECONDS
     public void startEmergencyCountDown(){
         EmergencyTextView.setVisibility(View.VISIBLE);
         stopEmergButton.setVisibility(View.VISIBLE);
@@ -108,6 +138,7 @@ public class MainActivity extends AppCompatActivity {
         startActivity(intent);
 
     }
+    ///PERMISIUNI
     public void permissions(){
         ///permisiuni SMS
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
@@ -126,14 +157,14 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CALL_PHONE}, REQUEST_CALL_PERMISSION);
         }
     }
-    public List<emergContact> getFavoriteContacts(Context context) {
+    ///Extragere contacte favorite
+    public static List<emergContact> getFavoriteContacts(Context context) {
         List<emergContact> Contacts = new ArrayList<>();
 
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions((Activity) context, new String[]{Manifest.permission.READ_CONTACTS}, 1);
-            return Contacts; // Returnează listă goală până la obținerea permisiunii
+            return Contacts;
         }
-
         ContentResolver contentResolver = context.getContentResolver();
         Uri uri = ContactsContract.Contacts.CONTENT_URI;
 
@@ -147,7 +178,6 @@ public class MainActivity extends AppCompatActivity {
                 @SuppressLint("Range") String contactId = cursor.getString(cursor.getColumnIndex(ContactsContract.Contacts._ID));
                 @SuppressLint("Range") String name = cursor.getString(cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME));
 
-                // Obține numărul de telefon
                 Cursor phoneCursor = contentResolver.query(
                         ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                         new String[]{ContactsContract.CommonDataKinds.Phone.NUMBER},
@@ -167,7 +197,7 @@ public class MainActivity extends AppCompatActivity {
 
         return Contacts;
     }
-
+    ///Metoda trimitere mesaj la apasarea butonului de emergency
     private void sendLocationAndMessage(emergContact contact){
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             // TODO: Consider calling
@@ -209,5 +239,108 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "Permisiunea pentru locație este necesară!", Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    ///VOICE RECOGNITION
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == VOICE_REQUEST_CODE && resultCode == RESULT_OK && data != null) {
+            ArrayList<String> results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+            if (results != null) {
+                for (String command : results) {
+                    if (command.toLowerCase().contains("help")) {
+                        emergContacts=getFavoriteContacts(this);
+                        for (emergContact contact : emergContacts) {
+                            sendLocationAndMessage(contact);
+
+                        }
+                        startEmergencyCountDown();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    private void startVoiceRecognition() {
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Spune ceva...");
+        try {
+            startActivityForResult(intent, VOICE_REQUEST_CODE);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Recunoaștere vocală indisponibilă", Toast.LENGTH_SHORT).show();
+        }
+    }
+    ///TESTARE INACTIVITATE
+    private final SensorEventListener sensorListener = new SensorEventListener() {
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            float x = event.values[0];
+            float y = event.values[1];
+            float z = event.values[2];
+            double acceleration = Math.sqrt(x * x + y * y + z * z);
+
+            if (Math.abs(acceleration - SensorManager.GRAVITY_EARTH) > MOVEMENT_THRESHOLD) {
+                resetInactivityTimer();
+                System.out.println("salut");
+            }
+        }
+
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+    };
+    private void startInactivityTimer() {
+        inactivityRunnable = () -> {
+            sendInactivityAlert();
+        };
+        inactivityHandler.postDelayed(inactivityRunnable, inactivityDelay);
+    }
+
+    private void resetInactivityTimer() {
+        inactivityHandler.removeCallbacks(inactivityRunnable);
+        inactivityHandler.postDelayed(inactivityRunnable, inactivityDelay);
+    }
+    private void sendInactivityAlert() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            // TODO: Consider calling
+            //    ActivityCompat#requestPermissions
+            // here to request the missing permissions, and then overriding
+            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            //                                          int[] grantResults)
+            // to handle the case where the user grants the permission. See the documentation
+            // for ActivityCompat#requestPermissions for more details.
+            return;
+        }
+        fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> {
+            if (location != null) {
+                String message = "Nu am mai fost activ de " + (inactivityDelay / 60000) + " minute. Locația mea curentă este: https://maps.google.com/?q=" +
+                        location.getLatitude() + "," + location.getLongitude();
+
+                emergContacts = getFavoriteContacts(this);
+                for (emergContact contact : emergContacts) {
+                    SmsManager smsManager = SmsManager.getDefault();
+                    smsManager.sendTextMessage(contact.getPhoneNumber(), null, message, null, null);
+                    Toast.makeText(this, "Mesaj de inactivitate trimis către: " + contact.getName(), Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+    }
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (accelerometer != null)
+            sensorManager.registerListener(sensorListener, accelerometer, SensorManager.SENSOR_DELAY_NORMAL);
+        if (gyroscope != null)
+            sensorManager.registerListener(sensorListener, gyroscope, SensorManager.SENSOR_DELAY_NORMAL);
+
+        startInactivityTimer();
+    }
+    @Override
+    protected void onPause() {
+        super.onPause();
+        sensorManager.unregisterListener(sensorListener);
+        inactivityHandler.removeCallbacks(inactivityRunnable);
     }
 }

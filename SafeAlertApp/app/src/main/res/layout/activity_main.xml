@@ -13,11 +13,11 @@
         android:layout_height="91dp"
         android:layout_marginStart="95dp"
         android:layout_marginEnd="96dp"
-        android:layout_marginBottom="83dp"
+        android:layout_marginBottom="108dp"
         android:text="Press if EMERGENCY"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="1.0"
+        app:layout_constraintHorizontal_bias="0.0"
         app:layout_constraintStart_toStartOf="parent" />
 
     <TextView
@@ -50,4 +50,18 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/EmergencyTextView" />
+
+    <Button
+        android:id="@+id/VoiceRecognButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="125dp"
+        android:layout_marginTop="32dp"
+        android:layout_marginEnd="126dp"
+        android:layout_marginBottom="28dp"
+        android:text="Voice recognition"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/EmergButton" />
 </androidx.constraintlayout.widget.ConstraintLayout>
