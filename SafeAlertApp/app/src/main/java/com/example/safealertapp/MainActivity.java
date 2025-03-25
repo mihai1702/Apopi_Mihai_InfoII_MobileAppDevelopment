@@ -58,9 +58,10 @@ public class MainActivity extends AppCompatActivity {
     private TextView EmergencyTextView;
     private static final int VOICE_REQUEST_CODE = 123;
     List<emergContact>emergContacts;
-
     private SensorManager sensorManager;
     private Sensor accelerometer, gyroscope;
+    private BatteryReceiver batteryReceiver;
+
 
     private Handler inactivityHandler = new Handler();
     private Runnable inactivityRunnable;
@@ -77,7 +78,7 @@ public class MainActivity extends AppCompatActivity {
         permissions();
 
         emergContacts=getFavoriteContacts(this);
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         Button EmergContact = findViewById(R.id.EmergButton);
 
@@ -129,6 +130,9 @@ public class MainActivity extends AppCompatActivity {
             NotificationManager manager = getSystemService(NotificationManager.class);
             manager.createNotificationChannel(channel);
         }
+
+        ///Baterry channel
+        createNotificationChannel();
 
     }
     ///EMERGENCY CALL AFTER 10 SECONDS
@@ -360,12 +364,20 @@ public class MainActivity extends AppCompatActivity {
             sensorManager.registerListener(sensorListener, gyroscope, SensorManager.SENSOR_DELAY_NORMAL);
 
         startInactivityTimer();
+
+        ///battery receiver
+        batteryReceiver = new BatteryReceiver();
+        IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        registerReceiver(batteryReceiver, filter);
     }
     @Override
     protected void onPause() {
         super.onPause();
         sensorManager.unregisterListener(sensorListener);
         inactivityHandler.removeCallbacks(inactivityRunnable);
+
+        unregisterReceiver(batteryReceiver);
+
     }
     ///Check weather
     private void checkWeatherAndNotify() {
@@ -420,5 +432,43 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         notificationManager.notify(1001, builder.build());
+    }
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    "battery_channel",
+                    "Alerte Baterie",
+                    NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription("Canal pentru notificări de baterie scăzută");
+
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                // TODO: Consider calling
+                //    ActivityCompat#requestPermissions
+                // here to request the missing permissions, and then overriding
+                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                //                                          int[] grantResults)
+                // to handle the case where the user grants the permission. See the documentation
+                // for ActivityCompat#requestPermissions for more details.
+                return;
+            }
+            fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
+                if (location != null) {
+                    double latitude = location.getLatitude();
+                    double longitude = location.getLongitude();
+                    String locationLink = "https://www.google.com/maps?q=" + latitude + "," + longitude;
+                    System.out.println(locationLink);
+                    for (emergContact contact : emergContacts) {
+                        String message="Atentie! Bateria mea este sub 5%! Locatia mea este: "+locationLink;
+                        SmsManager smsManager = SmsManager.getDefault();
+                        smsManager.sendTextMessage(contact.getPhoneNumber(), null, message, null, null);
+                    }
+                }
+                });
+
+                NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            if (notificationManager != null) {
+                notificationManager.createNotificationChannel(channel);
+            }
+        }
     }
 }
