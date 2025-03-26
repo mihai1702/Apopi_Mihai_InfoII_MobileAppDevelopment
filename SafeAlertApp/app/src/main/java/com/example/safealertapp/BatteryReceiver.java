@@ -51,6 +51,6 @@ public class BatteryReceiver extends BroadcastReceiver {
 
         }
         else if(batteryPct > 10)
-                ok=0;
+            ok=0;
     }
 }

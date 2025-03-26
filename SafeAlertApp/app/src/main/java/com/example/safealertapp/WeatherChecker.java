@@ -45,7 +45,7 @@ public class WeatherChecker {
                             callback.onSafe();
                         }
                         ///se decomenteaza pentru testing
-//                        callback.onDangerDetected("simulated storm", 42);
+                        callback.onDangerDetected("simulated storm", 42);
                     } catch (JSONException e) {
                         e.printStackTrace();
                         Log.e("WEATHER", "Eroare la parsarea JSON: " + e.getMessage());

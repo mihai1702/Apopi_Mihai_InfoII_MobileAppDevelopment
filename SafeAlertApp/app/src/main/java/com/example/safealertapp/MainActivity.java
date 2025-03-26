@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -30,6 +31,9 @@ import android.widget.Toast;
 import android.Manifest;
 import android.location.Location;
 import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.Geofence;
+import com.google.android.gms.location.GeofencingClient;
+import com.google.android.gms.location.GeofencingRequest;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.tasks.OnSuccessListener;
 
@@ -49,9 +53,10 @@ import java.util.List;
 public class MainActivity extends AppCompatActivity {
     private static final int SMS_PERMISSION_CODE = 1;
     private static final int LOCATION_PERMISSION_CODE = 2;
+    private static final int BACKGROUND_LOCATION_PERMISSION_CODE = 1002;
     private FusedLocationProviderClient fusedLocationClient;
     private static final int REQUEST_CALL_PERMISSION = 1;
-    private static final String EMERGENCY_NUMBER = "0787596450";
+    private static final String EMERGENCY_NUMBER = "0748231348";
     private Handler handler = new Handler();
     private Runnable callRunnable;
     private Button stopEmergButton;
@@ -61,12 +66,18 @@ public class MainActivity extends AppCompatActivity {
     private SensorManager sensorManager;
     private Sensor accelerometer, gyroscope;
     private BatteryReceiver batteryReceiver;
-
-
     private Handler inactivityHandler = new Handler();
     private Runnable inactivityRunnable;
-    private long inactivityDelay = 30 * 1000;///30 secunde
-    private final float MOVEMENT_THRESHOLD = 2.0f;///20.0f pentru testing
+    private long inactivityDelay = 10 * 1000;///30 secunde
+    private final float MOVEMENT_THRESHOLD = 20.0f;///20.0f pentru testing
+
+
+    private GeofencingClient geofencingClient;
+    private GeofenceHelper geofenceHelper;
+
+    private double safeLat = 44.4268;///Bucuresti
+    private double safeLon = 26.1025;
+    private float safeRadius = 100;///safe radius 100m
 
 
 
@@ -78,7 +89,7 @@ public class MainActivity extends AppCompatActivity {
         permissions();
 
         emergContacts=getFavoriteContacts(this);
-            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         Button EmergContact = findViewById(R.id.EmergButton);
 
@@ -134,6 +145,10 @@ public class MainActivity extends AppCompatActivity {
         ///Baterry channel
         createNotificationChannel();
 
+        geofencingClient = LocationServices.getGeofencingClient(this);
+        geofenceHelper = new GeofenceHelper(this);
+        addGeofence();
+
     }
     ///EMERGENCY CALL AFTER 10 SECONDS
     public void startEmergencyCountDown(){
@@ -165,9 +180,20 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.SEND_SMS}, SMS_PERMISSION_CODE);
         }
         ///perimisiuni locatie
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_PERMISSION_CODE);
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
+                    LOCATION_PERMISSION_CODE);
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {  // Android 10+
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, BACKGROUND_LOCATION_PERMISSION_CODE);
+            }
+        }
+
         ///permisiuni contacte
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_CONTACTS}, 1);
@@ -184,7 +210,9 @@ public class MainActivity extends AppCompatActivity {
                         new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1001);
             }
         }
+
     }
+
     ///Extragere contacte favorite
     public static List<emergContact> getFavoriteContacts(Context context) {
         List<emergContact> Contacts = new ArrayList<>();
@@ -262,9 +290,20 @@ public class MainActivity extends AppCompatActivity {
         }
         if (requestCode == LOCATION_PERMISSION_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Permisiune locație acordată!", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Permission accepted", Toast.LENGTH_SHORT).show();
+
             } else {
-                Toast.makeText(this, "Permisiunea pentru locație este necesară!", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Permission needed", Toast.LENGTH_SHORT).show();
+            }
+        }
+
+        if (requestCode == BACKGROUND_LOCATION_PERMISSION_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Permission accepted", Toast.LENGTH_SHORT).show();
+
+            } else {
+                Toast.makeText(this, "Permission needed", Toast.LENGTH_SHORT).show();
+
             }
         }
     }
@@ -401,7 +440,7 @@ public class MainActivity extends AppCompatActivity {
 
                                 // (opțional) trimite SMS
                                 SmsManager sms = SmsManager.getDefault();
-                                sms.sendTextMessage("07xxxxxxxx", null,
+                                sms.sendTextMessage("0748231348", null,
                                         "Alertă meteo: " + condition + " (" + temp + "°C)", null, null);
                             }
 
@@ -433,13 +472,16 @@ public class MainActivity extends AppCompatActivity {
         }
         notificationManager.notify(1001, builder.build());
     }
+
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
+            NotificationManager notificationManager = getSystemService(NotificationManager.class);
+
+            NotificationChannel batteryChannel = new NotificationChannel(
                     "battery_channel",
                     "Alerte Baterie",
                     NotificationManager.IMPORTANCE_HIGH);
-            channel.setDescription("Canal pentru notificări de baterie scăzută");
+            batteryChannel.setDescription("Canal pentru notificări de baterie scăzută");
 
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 // TODO: Consider calling
@@ -456,19 +498,40 @@ public class MainActivity extends AppCompatActivity {
                     double latitude = location.getLatitude();
                     double longitude = location.getLongitude();
                     String locationLink = "https://www.google.com/maps?q=" + latitude + "," + longitude;
-                    System.out.println(locationLink);
                     for (emergContact contact : emergContacts) {
-                        String message="Atentie! Bateria mea este sub 5%! Locatia mea este: "+locationLink;
+                        String message1="Atentie! Bateria mea este sub 5%! Locatia mea este: "+locationLink;
                         SmsManager smsManager = SmsManager.getDefault();
-                        smsManager.sendTextMessage(contact.getPhoneNumber(), null, message, null, null);
+                        smsManager.sendTextMessage(contact.getPhoneNumber(), null, message1, null, null);
                     }
                 }
-                });
+            });
+            NotificationChannel geoChannel = new NotificationChannel(
+                    "geo_channel",
+                    "Alerte Geofencing",
+                    NotificationManager.IMPORTANCE_HIGH);
+            geoChannel.setDescription("Notificări pentru ieșirea din zona sigură");
 
-                NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            // Înregistrăm canalele
             if (notificationManager != null) {
-                notificationManager.createNotificationChannel(channel);
+                notificationManager.createNotificationChannel(batteryChannel);
+                notificationManager.createNotificationChannel(geoChannel);
             }
         }
     }
+
+    private void addGeofence() {
+        Geofence geofence = geofenceHelper.getGeofence("SAFE_ZONE", safeLat, safeLon, safeRadius);
+        GeofencingRequest request = geofenceHelper.getGeofencingRequest(geofence);
+        PendingIntent pendingIntent = geofenceHelper.getPendingIntent();
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 101);
+            return;
+        }
+
+        geofencingClient.addGeofences(request, pendingIntent)
+                .addOnSuccessListener(aVoid -> Log.d("GEOFENCE", "Geofence adăugat!"))
+                .addOnFailureListener(e -> Log.e("GEOFENCE", "Eroare la adăugare: " + e.getMessage()));
+    }
+
 }
